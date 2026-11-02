@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Usage Monitor</title>
+<style>
+  :root {
+    --bg: #f6f6f4; --card: #ffffff; --fg: #1d1d1b; --muted: #77756f; --track: #e8e6e1;
+    --ok: #2f9e6a; --warn: #d39b1c; --bad: #d4483b; --claude: #c96442; --codex: #3d6fd9;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #161615; --card: #222220; --fg: #ecebe7; --muted: #9a988f; --track: #34332f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 10px; background: var(--bg); color: var(--fg);
+         font: 13px/1.35 -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", sans-serif; }
+  .card { background: var(--card); border-radius: 10px; padding: 10px 12px; margin-bottom: 8px; }
+  .head { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; font-weight: 600; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; }
+  .plan { margin-left: auto; color: var(--muted); font-weight: 400; font-size: 11px; }
+  .row { margin: 6px 0; }
+  .lbl { display: flex; justify-content: space-between; font-size: 12px; }
+  .pct { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .bar { height: 6px; background: var(--track); border-radius: 3px; overflow: hidden; margin: 3px 0 2px; }
+  .fill { height: 100%; border-radius: 3px; transition: width .4s; }
+  .reset { color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+  .err { color: var(--bad); font-size: 12px; }
+  footer { display: flex; justify-content: space-between; color: var(--muted); font-size: 11px; padding: 0 2px; }
+  button { background: none; border: 0; color: var(--muted); cursor: pointer; font-size: 11px; padding: 0; }
+  button:hover { color: var(--fg); }
+</style>
+</head>
+<body>
+<div id="cards"></div>
+<footer><span id="upd">불러오는 중…</span><button onclick="load(true)">↻ 새로고침</button></footer>
+<script>
+const SVCS = [["claude", "Claude Code", "var(--claude)"], ["codex", "Codex", "var(--codex)"]];
+let data = null;
+
+function color(p) { return p >= 90 ? "var(--bad)" : p >= 70 ? "var(--warn)" : "var(--ok)"; }
+
+function left(sec) {
+  if (sec == null) return "";
+  if (sec <= 0) return "곧 초기화";
+  const d = Math.floor(sec / 86400), h = Math.floor(sec % 86400 / 3600),
+        m = Math.floor(sec % 3600 / 60), s = Math.floor(sec % 60);
+  if (d) return `${d}일 ${h}시간 ${m}분`;
+  if (h) return `${h}시간 ${m}분`;
+  return `${m}분 ${s}초`;
+}
+
+function when(ts) {
+  const d = new Date(ts * 1000);
+  const days = ["일","월","화","수","목","금","토"];
+  return `${d.getMonth()+1}/${d.getDate()}(${days[d.getDay()]}) ${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+}
+
+function row(name, w) {
+  if (!w) return "";
+  const p = Math.round(w.pct), now = Date.now() / 1000;
+  const r = w.reset_at ? `${left(w.reset_at - now)} 후 초기화 · ${when(w.reset_at)}` : "";
+  return `<div class="row"><div class="lbl"><span>${name}</span><span class="pct" style="color:${color(p)}">${p}%</span></div>
+    <div class="bar"><div class="fill" style="width:${Math.min(p,100)}%;background:${color(p)}"></div></div>
+    <div class="reset">${r}</div></div>`;
+}
+
+function render() {
+  if (!data) return;
+  document.getElementById("cards").innerHTML = SVCS.map(([k, title, c]) => {
+    const s = data[k];
+    const body = s.ok ? row("5시간", s.five) + row("1주일", s.week) : `<div class="err">${s.error}</div>`;
+    return `<div class="card"><div class="head"><span class="dot" style="background:${c}"></span>${title}
+      <span class="plan">${s.plan || ""}</span></div>${body}</div>`;
+  }).join("");
+  const ago = Math.round(Date.now() / 1000 - data.fetched_at);
+  document.getElementById("upd").textContent = `업데이트 ${ago < 5 ? "방금" : ago + "초 전"}`;
+}
+
+async function load(force) {
+  try {
+    const r = await fetch("/api/usage" + (force ? "?force=1" : ""));
+    data = await r.json();
+    const worst = Math.max(...SVCS.flatMap(([k]) => data[k].ok ? [data[k].five?.pct||0, data[k].week?.pct||0] : [0]));
+    document.title = `${Math.round(worst)}% · Usage`;
+  } catch (e) {
+    document.getElementById("upd").textContent = "서버 연결 실패";
+  }
+  render();
+}
+
+load();
+setInterval(load, 60000);
+setInterval(render, 1000);
+</script>
+</body>
+</html>
